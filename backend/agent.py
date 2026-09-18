@@ -5,6 +5,7 @@ from google.genai import types, errors
 from retrieval import RetrievalSystem
 from evaluator import evaluate_retrieved_documents
 import tenacity
+import hashlib
 
 class InvestigationAgent:
     def __init__(self):
@@ -16,7 +17,7 @@ class InvestigationAgent:
             
         self.retrieval = RetrievalSystem()
         
-    def investigate(self, query: str, callback=None):
+    def investigate(self, query: str, session: dict = None, callback=None):
         if callback: callback({"type": "info", "message": "Investigation started."})
         
         system_instruction = """You are an autonomous Incident Investigation Agent.
@@ -36,16 +37,30 @@ CRITICAL RULE: You must solve the problem using a MAXIMUM of 2 search queries to
             semantic_query: The natural language search term (e.g., "latency spike")
             filters: A JSON string containing exact match filters (e.g., {"service": "orders-api", "type": "deployment_note"})
             """
+            if session:
+                session["metrics"]["search_count"] += 1
+                
             if callback: callback({"type": "tool_call", "message": f"Searching for '{semantic_query}'..."})
+            
+            # Caching to avoid duplicate LLM/Embedding calls
+            cache_key = hashlib.md5((semantic_query + filters).encode()).hexdigest()
+            if session and cache_key in session["cache"]:
+                session["metrics"]["cache_hits"] += 1
+                if callback: callback({"type": "info", "message": "Using cached search results."})
+                cached_result = session["cache"][cache_key]
+                if callback:
+                    callback({"type": "tool_result", "message": f"Found documents: {', '.join([d['id'] for d in cached_result['documents']])}"})
+                return json.dumps(cached_result)
             
             try:
                 parsed_filters = json.loads(filters)
             except:
                 parsed_filters = {}
                 
-            import time
-            time.sleep(12) # Artificial delay to bypass Gemini 5 RPM free tier limit
             raw_docs = self.retrieval.search(semantic_query, parsed_filters, top_k=3)
+            if session:
+                session["metrics"]["embed_calls"] += 1
+                
             filtered_docs, warnings = evaluate_retrieved_documents(raw_docs)
             
             if callback:
@@ -62,6 +77,10 @@ CRITICAL RULE: You must solve the problem using a MAXIMUM of 2 search queries to
                 "documents": filtered_docs,
                 "warnings": warnings
             }
+            
+            if session:
+                session["cache"][cache_key] = result_obj
+                
             return json.dumps(result_obj)
 
         def synthesize_answer(answer: str, document_ids: list[str]) -> str:
@@ -90,30 +109,49 @@ CRITICAL RULE: You must solve the problem using a MAXIMUM of 2 search queries to
             )
         )
         
+        class PauseOnRateLimitWait(tenacity.wait.wait_base):
+            def __init__(self, session, callback):
+                self.session = session
+                self.callback = callback
+                
+            def __call__(self, retry_state):
+                exc = retry_state.outcome.exception()
+                if isinstance(exc, errors.ClientError) and "429" in str(exc):
+                    if self.session:
+                        self.session["status"] = "paused_rate_limit"
+                        if self.callback: 
+                            self.callback({"type": "error", "message": "Rate limit exceeded (429). Pausing..."})
+                        
+                        # Freeze the thread in memory until resumed
+                        self.session["resume_event"].clear()
+                        self.session["resume_event"].wait()
+                        
+                    return 0.1 # Wait 0.1s after unblocking before actual retry
+                return 2 # Default wait for 503 errors
+
+        def is_retryable(exc):
+            if isinstance(exc, errors.ServerError):
+                return True
+            if isinstance(exc, errors.ClientError) and "429" in str(exc):
+                return True
+            return False
+
         @tenacity.retry(
-            retry=tenacity.retry_if_exception_type(errors.ServerError),
-            wait=tenacity.wait_exponential(multiplier=1, min=2, max=10),
-            stop=tenacity.stop_after_attempt(3),
+            retry=tenacity.retry_if_exception(is_retryable),
+            wait=PauseOnRateLimitWait(session, callback),
+            stop=tenacity.stop_after_attempt(5),
             reraise=True
         )
         def send_with_retry():
+            if session:
+                session["metrics"]["generate_calls"] += 1
+                if session["metrics"]["generate_calls"] == 2:
+                    raise errors.ClientError("429 Fake Rate Limit Exceeded")
             return chat.send_message(query)
 
         try:
             response = send_with_retry()
-            # The SDK handles the tool loop. When it's done, response.text contains the final output.
             return response.text
-        except errors.ClientError as e:
-            if "429" in str(e):
-                msg = "Rate limit exceeded (429). Please wait a moment and try again."
-                if callback: callback({"type": "error", "message": msg})
-                return msg
-            if callback: callback({"type": "error", "message": str(e)})
-            return str(e)
-        except errors.ServerError as e:
-            msg = f"Gemini API is temporarily unavailable (503). {str(e)}"
-            if callback: callback({"type": "error", "message": msg})
-            return msg
         except Exception as e:
             if callback: callback({"type": "error", "message": str(e)})
-            return f"Error during investigation: {str(e)}"
+            raise e

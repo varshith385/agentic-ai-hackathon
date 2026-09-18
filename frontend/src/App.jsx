@@ -3,17 +3,65 @@ import dataset from './data.json'
 
 function App() {
   const [query, setQuery] = useState('')
+  const [sessionId, setSessionId] = useState(null)
   const [investigating, setInvestigating] = useState(false)
+  const [paused, setPaused] = useState(false)
   const [trace, setTrace] = useState([])
   const [answer, setAnswer] = useState(null)
   const [isDemoMode, setIsDemoMode] = useState(false)
   const traceEndRef = useRef(null)
+
+  const connectSSE = (sid) => {
+    const eventSource = new EventSource(`http://localhost:8000/stream/${sid}`)
+    
+    eventSource.onmessage = (e) => {
+      const eventData = JSON.parse(e.data)
+      
+      if (eventData.type === 'complete') {
+        try {
+          setAnswer(JSON.parse(eventData.message))
+        } catch (err) {
+          setAnswer({ answer: eventData.message })
+        }
+        eventSource.close()
+        setInvestigating(false)
+        setPaused(false)
+      } else if (eventData.type === 'error' && eventData.message.includes('429')) {
+        setTrace(prev => {
+          // avoid duplicates if reconnecting
+          const last = prev[prev.length - 1]
+          if (last && last.message === eventData.message) return prev;
+          return [...prev, { type: 'error', message: eventData.message }]
+        })
+        eventSource.close()
+        setInvestigating(false)
+        setPaused(true)
+      } else if (eventData.type === 'error') {
+        setTrace(prev => [...prev, { type: 'error', message: eventData.message }])
+        eventSource.close()
+        setInvestigating(false)
+        setPaused(false)
+      } else if (eventData.type === 'done') {
+        eventSource.close()
+        setInvestigating(false)
+        setPaused(false)
+      } else {
+        setTrace(prev => {
+          // Naive deduplication for simplicity during reconnects
+          const exists = prev.some(item => item.message === eventData.message && item.type === eventData.type)
+          if (exists) return prev;
+          return [...prev, eventData]
+        })
+      }
+    }
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (!query.trim()) return
     
     setInvestigating(true)
+    setPaused(false)
     setTrace([])
     setAnswer(null)
     setIsDemoMode(false)
@@ -27,30 +75,8 @@ function App() {
       const data = await res.json()
       
       if (data.session_id) {
-        const eventSource = new EventSource(`http://localhost:8000/stream/${data.session_id}`)
-        
-        eventSource.onmessage = (e) => {
-          const eventData = JSON.parse(e.data)
-          
-          if (eventData.type === 'complete') {
-            try {
-              setAnswer(JSON.parse(eventData.message))
-            } catch (err) {
-              setAnswer({ answer: eventData.message })
-            }
-            eventSource.close()
-            setInvestigating(false)
-          } else if (eventData.type === 'error') {
-            setTrace(prev => [...prev, { type: 'error', message: eventData.message }])
-            eventSource.close()
-            setInvestigating(false)
-          } else if (eventData.type === 'done') {
-            eventSource.close()
-            setInvestigating(false)
-          } else {
-            setTrace(prev => [...prev, eventData])
-          }
-        }
+        setSessionId(data.session_id)
+        connectSSE(data.session_id)
       }
     } catch (err) {
       console.error(err)
@@ -58,8 +84,24 @@ function App() {
     }
   }
 
+  const handleResume = async () => {
+    if (!sessionId) return
+    setInvestigating(true)
+    setPaused(false)
+    
+    try {
+      await fetch(`http://localhost:8000/resume/${sessionId}`, { method: 'POST' })
+      connectSSE(sessionId)
+    } catch (err) {
+      console.error(err)
+      setInvestigating(false)
+      setPaused(true)
+    }
+  }
+
   const runDemo = () => {
     setInvestigating(true)
+    setPaused(false)
     setTrace([])
     setAnswer(null)
     setIsDemoMode(true)
@@ -136,30 +178,47 @@ function App() {
           </p>
         </header>
 
-        <form onSubmit={handleSubmit} className="max-w-4xl mx-auto flex gap-3">
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="e.g. Why did the Order API become slow on September 16? Check whether the deployment was related."
-            className="flex-1 px-4 py-3 rounded-lg border border-slate-300 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-800 text-slate-800"
-            disabled={investigating}
-          />
-          <button 
-            type="submit" 
-            disabled={investigating || !query.trim()}
-            className="px-6 py-3 bg-slate-800 text-white font-medium rounded-lg shadow-sm hover:bg-slate-900 disabled:opacity-50 transition-colors"
-          >
-            {investigating && !isDemoMode ? 'Investigating...' : 'Live API'}
-          </button>
-          <button 
-            type="button" 
-            onClick={runDemo}
-            disabled={investigating || !query.trim()}
-            className="px-6 py-3 bg-emerald-600 text-white font-medium rounded-lg shadow-sm hover:bg-emerald-700 disabled:opacity-50 transition-colors flex items-center gap-2"
-          >
-            Replay Demo
-          </button>
+        <form onSubmit={handleSubmit} className="max-w-4xl mx-auto flex flex-col gap-3">
+          <div className="flex gap-3">
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="e.g. Why did the Order API become slow on September 16? Check whether the deployment was related."
+              className="flex-1 px-4 py-3 rounded-lg border border-slate-300 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-800 text-slate-800"
+              disabled={investigating || paused}
+            />
+            <button 
+              type="submit" 
+              disabled={investigating || paused || !query.trim()}
+              className="px-6 py-3 bg-slate-800 text-white font-medium rounded-lg shadow-sm hover:bg-slate-900 disabled:opacity-50 transition-colors"
+            >
+              Live API
+            </button>
+            <button 
+              type="button" 
+              onClick={runDemo}
+              disabled={investigating || paused || !query.trim()}
+              className="px-6 py-3 bg-emerald-600 text-white font-medium rounded-lg shadow-sm hover:bg-emerald-700 disabled:opacity-50 transition-colors flex items-center gap-2"
+            >
+              Replay Demo
+            </button>
+          </div>
+          
+          {paused && (
+            <div className="flex items-center justify-between bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-lg shadow-sm">
+              <div>
+                <strong>Investigation Paused.</strong> AI service is temporarily rate limited. Your investigation state has been saved. No work was lost.
+              </div>
+              <button 
+                type="button" 
+                onClick={handleResume}
+                className="px-4 py-2 bg-amber-600 text-white font-medium rounded hover:bg-amber-700 transition-colors shadow-sm"
+              >
+                Resume Investigation
+              </button>
+            </div>
+          )}
         </form>
         
         {isDemoMode && (
@@ -180,14 +239,14 @@ function App() {
               </span>}
             </div>
             <div className="p-4 flex-1 overflow-y-auto space-y-3 text-sm">
-              {trace.length === 0 && !investigating && (
+              {trace.length === 0 && !investigating && !paused && (
                 <div className="text-slate-400 text-center mt-10">Awaiting incident query...</div>
               )}
               {trace.map((item, idx) => (
                 <div key={idx} className={`p-3 rounded border ${
                   item.type === 'tool_call' ? 'bg-slate-50 border-slate-200 text-slate-800' :
                   item.type === 'warning' ? 'bg-rose-50 border-rose-200 text-rose-800 font-semibold' :
-                  item.type === 'error' ? 'bg-red-50 border-red-200 text-red-800' :
+                  item.type === 'error' ? 'bg-amber-50 border-amber-200 text-amber-800' :
                   item.type === 'tool_result' ? 'bg-white border-slate-100 text-slate-600 font-mono text-xs' :
                   'bg-white border-transparent text-slate-500'
                 }`}>
@@ -277,6 +336,13 @@ function App() {
                     <div className="space-y-4 text-center">
                       <div className="h-8 w-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin mx-auto"></div>
                       <p>Synthesizing evidence...</p>
+                    </div>
+                  ) : paused ? (
+                    <div className="text-center space-y-2">
+                      <svg className="w-12 h-12 mx-auto text-amber-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <p className="text-amber-600 font-medium">Investigation Paused</p>
                     </div>
                   ) : (
                     <div className="text-center space-y-2">
