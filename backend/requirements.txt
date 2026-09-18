@@ -2,6 +2,7 @@ fastapi
 uvicorn
 pydantic
 chromadb
-google-genai
+openai
 python-dotenv
 sse-starlette
+sentence-transformers

@@ -40,7 +40,9 @@ async def investigate_start(request: InvestigateRequest):
             "generate_calls": 0,
             "embed_calls": 0,
             "search_count": 0,
-            "cache_hits": 0
+            "cache_hits": 0,
+            "tool_call_count": 0,
+            "react_iterations": 0
         }
     }
     return {"session_id": session_id}

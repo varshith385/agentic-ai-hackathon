@@ -12,7 +12,7 @@ function App() {
   const traceEndRef = useRef(null)
 
   const connectSSE = (sid) => {
-    const eventSource = new EventSource(`http://localhost:8000/stream/${sid}`)
+    const eventSource = new EventSource(`http://127.0.0.1:8001/stream/${sid}`)
     
     eventSource.onmessage = (e) => {
       const eventData = JSON.parse(e.data)
@@ -67,7 +67,7 @@ function App() {
     setIsDemoMode(false)
     
     try {
-      const res = await fetch('http://localhost:8000/investigate', {
+      const res = await fetch('http://127.0.0.1:8001/investigate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query })
@@ -90,7 +90,7 @@ function App() {
     setPaused(false)
     
     try {
-      await fetch(`http://localhost:8000/resume/${sessionId}`, { method: 'POST' })
+      await fetch(`http://127.0.0.1:8001/resume/${sessionId}`, { method: 'POST' })
       connectSSE(sessionId)
     } catch (err) {
       console.error(err)
@@ -279,8 +279,8 @@ function App() {
                     </div>
                   ) : (
                     <>
-                      <div className="prose prose-slate max-w-none text-slate-800 leading-relaxed text-lg">
-                        {answer.answer}
+                      <div className="prose prose-slate max-w-none text-slate-800 leading-relaxed text-lg whitespace-pre-wrap">
+                        {typeof answer.answer === 'string' ? answer.answer.replace(/\\n/g, '\n') : answer.answer}
                       </div>
                       
                       {answer.citations && answer.citations.length > 0 && (

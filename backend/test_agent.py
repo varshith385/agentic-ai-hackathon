@@ -12,7 +12,8 @@ def run_test():
     agent = InvestigationAgent()
     
     queries = [
-        "Why did the Order API become slow on September 16? Check whether the deployment was related and whether we have seen this before."
+        "Why did the Order API become slow on September 16? Check whether the deployment was related and whether we have seen this before.",
+        "What is the troubleshooting procedure for restarting Service A?"
     ]
     
     for i, q in enumerate(queries):

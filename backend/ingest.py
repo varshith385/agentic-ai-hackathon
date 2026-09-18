@@ -1,7 +1,7 @@
 import json
 import os
 import chromadb
-from embedding import GeminiEmbeddingFunction
+from embedding import get_embedding_function
 
 def ingest_data(file_path: str = "../data/test_cases.json", db_path: str = "./chroma_db"):
     if not os.path.exists(file_path):
@@ -19,7 +19,7 @@ def ingest_data(file_path: str = "../data/test_cases.json", db_path: str = "./ch
     except Exception:
         pass
         
-    ef = GeminiEmbeddingFunction()
+    ef = get_embedding_function()
     collection = client.create_collection(name="incidents", embedding_function=ef)
     
     ids = []

@@ -1,10 +1,10 @@
 import chromadb
-from embedding import GeminiEmbeddingFunction
+from embedding import get_embedding_function
 
 class RetrievalSystem:
     def __init__(self, db_path: str = "./chroma_db"):
         self.client = chromadb.PersistentClient(path=db_path)
-        ef = GeminiEmbeddingFunction()
+        ef = get_embedding_function()
         self.collection = self.client.get_collection(name="incidents", embedding_function=ef)
         
     def search(self, query: str, filters: dict = None, top_k: int = 3) -> list[dict]:
