@@ -71,7 +71,7 @@ async def test_429():
     # We must run it using the sync investigate method just like main.py
     # so threading.Event().wait() blocks correctly.
     def run_agent():
-        agent.investigate("Test query", session, mock_callback)
+        agent.investigate("Order API latency", session, mock_callback)
         
     t = threading.Thread(target=run_agent)
     t.start()

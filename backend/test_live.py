@@ -1,7 +1,6 @@
 import requests
 import json
 import sseclient
-import time
 
 def test_query(query):
     print(f"\n========================================")
@@ -41,12 +40,11 @@ def test_query(query):
                     if payload.get("status") == "out_of_scope":
                         print(f"\n[OUT OF SCOPE]")
                     else:
-                        print(f"\n[FINAL ANSWER]")
+                        print(f"\n[FINAL ANSWER] {payload}")
                     break
                 
     except Exception as e:
         print(f"  [EXCEPTION] {e}")
 
 if __name__ == "__main__":
-    test_query("What evidence connects INC-1042 with DEP-882?")
-    test_query("What is the capital of India?")
+    test_query("Why did the Order API become slow on September 16? Was it related to the latest deployment?")
