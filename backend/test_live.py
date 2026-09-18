@@ -29,7 +29,7 @@ def test_query(query):
                 elif msg_type == "warning":
                     print(f"  [ALERT] {msg}")
                 elif msg_type == "rate_limit":
-                    print(f"  [RATE LIMIT PAUSED] {msg} (Cooldown: {data.get('retry_after')}s)")
+                    print(f"  [RATE LIMIT PAUSED] {msg}")
                     break
                 elif msg_type == "error":
                     print(f"  [ERROR] {msg}")
@@ -40,21 +40,13 @@ def test_query(query):
                     payload = json.loads(msg)
                     if payload.get("status") == "out_of_scope":
                         print(f"\n[OUT OF SCOPE]")
-                        print(payload.get("answer"))
-                    elif payload.get("status") == "insufficient":
-                        print(f"\n[INSUFFICIENT EVIDENCE]")
-                        print(payload.get("reason"))
                     else:
                         print(f"\n[FINAL ANSWER]")
-                        print(payload.get("answer"))
-                        print(f"\n[CITATIONS] {payload.get('citations')}")
-                        print(f"\n[METRICS]")
-                        print(json.dumps(payload.get("metrics"), indent=2))
                     break
                 
     except Exception as e:
         print(f"  [EXCEPTION] {e}")
 
 if __name__ == "__main__":
+    test_query("What evidence connects INC-1042 with DEP-882?")
     test_query("What is the capital of India?")
-    test_query("Order API latency")

@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+import time
 import openai
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
@@ -131,6 +132,31 @@ class InvestigationAgent:
     async def investigate_async(self, query: str, session: dict = None, callback=None):
         if callback: callback({"type": "info", "message": "Investigation started."})
         
+        import re
+        # Out-of-domain deterministic check
+        domain_keywords = [
+            # Standard generic SRE concepts
+            r"\bincident\b", r"\boutage\b", r"\blatency\b", r"\bdeployment\b", r"\bservice\b", r"\bapi\b",
+            r"\berror\b", r"\bfailure\b", r"\bversion\b", r"\bpostmortem\b", r"\bproduction\b",
+            r"\btroubleshooting\b", r"\broot cause\b", r"\bdatabase\b", r"\balert\b", r"\blogs\b",
+            r"\binfrastructure\b", r"\brollback\b", r"\brelease\b", r"\bproblem\b", r"\bslow\b", r"\bdown\b",
+            r"\bhappened before\b",
+            # Internal document identifiers (case-insensitive due to query_lower)
+            r"\binc-\d+\b", r"\bdep-\d+\b", r"\bpm-\d+\b", r"\bguide-\d+\b",
+            # Internal service/version identifiers
+            r"\bv\d+\.\d+\.\d+\b", r"\b\w+-api\b"
+        ]
+        query_lower = query.lower()
+        if not any(re.search(k, query_lower) for k in domain_keywords):
+            if callback: 
+                callback({"type": "info", "message": "Investigation skipped: Out of Scope."})
+                callback({"type": "complete", "message": json.dumps({
+                    "status": "out_of_scope",
+                    "answer": "Out of Scope\n\nThis system investigates operational incidents, deployments, service issues, versions, and internal technical documentation.",
+                    "citations": []
+                })})
+            return json.dumps({"status": "out_of_scope"})
+
         if not self.api_key:
             if callback: callback({"type": "error", "message": "Missing GROQ_API_KEY environment variable."})
             return json.dumps({"status": "error", "reason": "Missing GROQ_API_KEY"})
@@ -145,13 +171,28 @@ WORKFLOW RULES:
 3. Determine what information is missing. If you found an incident tied to a deployment, you MUST perform a targeted follow-up search for that deployment or version to check for historical context. Do not guess!
 4. If you hit a contradiction, look for system WARNINGS in your context. Differentiate between old and new versions (e.g., v1 vs v3).
 5. Do not repeat the exact same search query. If your search returns documents you have already seen, you have exhausted the search space and MUST stop searching and call synthesize_answer immediately.
-6. Once you have enough cross-referenced evidence, use `synthesize_answer` to provide the final root-cause hypothesis. 
+6. IMPORTANT REASONING RULES:
+   - NEVER convert temporal correlation into confirmed causation (e.g. "happened shortly after deployment" is temporal, NOT causal).
+   - NEVER transfer the root cause from an old incident to a new incident unless a retrieved document explicitly connects them.
+   - Version differences matter. Explicitly notice version/date differences when using historical documents.
+   - Historical evidence can provide context, but context is not proof. Label previous incidents as historical context rather than using them as direct evidence for the current incident.
+   - A hypothesis about the CURRENT incident may only introduce a specific causal mechanism if at least one retrieved document contains evidence connecting that mechanism to the CURRENT incident, CURRENT deployment, CURRENT version, or an explicitly linked change. If no such evidence exists, you must stop at the highest-supported level of inference (e.g., "The deployment is a plausible trigger"). Do not add speculative mechanisms like schema migrations or connection-pool changes based on past incidents.
+   - Citations must support the exact claim being made.
+   - If the exact root cause is unavailable, explicitly state that it is not established by the available evidence.
+   - When generating search queries, use the exact dates provided. If the user does not provide a year, do not invent one (e.g., do not append a default year like 2024). Once you retrieve documents, you may use the dates/years from the retrieved metadata to refine your subsequent searches.
+7. Once you have enough cross-referenced evidence, use `synthesize_answer` to provide the final root-cause hypothesis. 
 
 FORMAT OF FINAL ANSWER:
-Your final answer must explicitly distinguish the confidence of your findings using these exact labels:
-* CONFIRMED EVIDENCE: (State facts definitively backed by document IDs)
-* SUPPORTED HYPOTHESIS: (State logical deductions from the evidence)
-* UNRESOLVED: (State conflicting guidance if applicable)
+Your final answer must be concise, strictly evidence-grounded, and structured with these exact headings:
+
+CONFIRMED EVIDENCE:
+- Facts directly supported by retrieved documents.
+
+SUPPORTED HYPOTHESIS:
+- Reasonable inference from the evidence, but NOT proven causation.
+
+UNRESOLVED:
+- Things the evidence does not establish (e.g., specific root causes, unknown triggers, unproven connections).
 
 If the evidence cannot logically establish a cause, explicitly invoke `insufficient_evidence`. Never invent or hallucinate document IDs, versions, dates, causes, metrics, or recommendations!"""
 
@@ -246,7 +287,45 @@ If the evidence cannot logically establish a cause, explicitly invoke `insuffici
             except openai.RateLimitError as e:
                 if session:
                     session["status"] = "paused_rate_limit"
-                    if callback: callback({"type": "error", "message": "Rate limit exceeded (429). Pausing..."})
+                    
+                    # Parse Groq specific reset headers
+                    cooldown = 60 # fallback
+                    headers = getattr(e, 'response', None)
+                    if headers is not None and hasattr(headers, 'headers'):
+                        h = headers.headers
+                        # Try standard retry-after first
+                        if 'retry-after' in h:
+                            try: cooldown = float(h['retry-after'])
+                            except: pass
+                        else:
+                            # Groq specific headers
+                            req_reset = h.get('x-ratelimit-reset-requests')
+                            tok_reset = h.get('x-ratelimit-reset-tokens')
+                            
+                            vals = []
+                            if req_reset:
+                                try:
+                                    # Sometimes format is "X.Ys"
+                                    val = float(req_reset.replace('s', ''))
+                                    vals.append(val)
+                                except: pass
+                            if tok_reset:
+                                try:
+                                    val = float(tok_reset.replace('s', ''))
+                                    vals.append(val)
+                                except: pass
+                                
+                            if vals:
+                                cooldown = max(vals)
+                                
+                    session["rate_limit_until"] = time.time() + cooldown
+                    
+                    if callback: callback({
+                        "type": "rate_limit", 
+                        "message": "Groq API rate limit reached.",
+                        "retry_after": int(cooldown),
+                        "status": "paused"
+                    })
                     session["resume_event"].clear()
                     session["metrics"]["generate_calls"] -= 1
                     continue

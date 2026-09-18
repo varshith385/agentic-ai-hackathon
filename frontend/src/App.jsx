@@ -6,6 +6,7 @@ function App() {
   const [sessionId, setSessionId] = useState(null)
   const [investigating, setInvestigating] = useState(false)
   const [paused, setPaused] = useState(false)
+  const [retryAfter, setRetryAfter] = useState(0)
   const [trace, setTrace] = useState([])
   const [answer, setAnswer] = useState(null)
   const [isDemoMode, setIsDemoMode] = useState(false)
@@ -33,6 +34,16 @@ function App() {
           if (last && last.message === eventData.message) return prev;
           return [...prev, { type: 'error', message: eventData.message }]
         })
+        eventSource.close()
+        setInvestigating(false)
+        setPaused(true)
+      } else if (eventData.type === 'rate_limit') {
+        setTrace(prev => {
+          const last = prev[prev.length - 1]
+          if (last && last.message === eventData.message) return prev;
+          return [...prev, { type: 'error', message: eventData.message }]
+        })
+        setRetryAfter(eventData.retry_after || 0)
         eventSource.close()
         setInvestigating(false)
         setPaused(true)
@@ -154,6 +165,15 @@ function App() {
     traceEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [trace])
 
+  useEffect(() => {
+    if (retryAfter > 0) {
+      const timer = setInterval(() => {
+        setRetryAfter(prev => Math.max(0, prev - 1))
+      }, 1000)
+      return () => clearInterval(timer)
+    }
+  }, [retryAfter])
+
   const formatTraceMessage = (item) => {
     if (item.type === 'tool_call') {
       const match = item.message.match(/Searching for '(.*)'\.\.\./)
@@ -190,7 +210,7 @@ function App() {
             />
             <button 
               type="submit" 
-              disabled={investigating || paused || !query.trim()}
+              disabled={investigating || !query.trim()}
               className="px-6 py-3 bg-slate-800 text-white font-medium rounded-lg shadow-sm hover:bg-slate-900 disabled:opacity-50 transition-colors"
             >
               Live API
@@ -198,7 +218,7 @@ function App() {
             <button 
               type="button" 
               onClick={runDemo}
-              disabled={investigating || paused || !query.trim()}
+              disabled={investigating || !query.trim()}
               className="px-6 py-3 bg-emerald-600 text-white font-medium rounded-lg shadow-sm hover:bg-emerald-700 disabled:opacity-50 transition-colors flex items-center gap-2"
             >
               Replay Demo
@@ -209,11 +229,17 @@ function App() {
             <div className="flex items-center justify-between bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-lg shadow-sm">
               <div>
                 <strong>Investigation Paused.</strong> AI service is temporarily rate limited. Your investigation state has been saved. No work was lost.
+                {retryAfter > 0 && (
+                  <div className="mt-1 text-sm font-semibold text-amber-700">
+                    Resume available in {retryAfter}s
+                  </div>
+                )}
               </div>
               <button 
                 type="button" 
                 onClick={handleResume}
-                className="px-4 py-2 bg-amber-600 text-white font-medium rounded hover:bg-amber-700 transition-colors shadow-sm"
+                disabled={retryAfter > 0}
+                className="px-4 py-2 bg-amber-600 text-white font-medium rounded hover:bg-amber-700 disabled:opacity-50 disabled:hover:bg-amber-600 transition-colors shadow-sm"
               >
                 Resume Investigation
               </button>

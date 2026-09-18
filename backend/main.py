@@ -9,6 +9,7 @@ from sse_starlette.sse import EventSourceResponse
 import uuid
 import json
 import threading
+import time
 from agent import InvestigationAgent
 
 app = FastAPI(title="Incident Investigation Agent API")
@@ -56,6 +57,19 @@ async def resume_investigation(session_id: str):
     if session["status"] != "paused_rate_limit":
         return {"status": "Already " + session["status"]}
         
+    rate_limit_until = session.get("rate_limit_until")
+    if rate_limit_until is not None:
+        now = time.time()
+        if now < rate_limit_until:
+            remaining = int(rate_limit_until - now)
+            return {
+                "status": "rate_limited",
+                "retry_after": remaining,
+                "message": f"Investigation is still rate limited. Please wait before resuming."
+            }
+        else:
+            session.pop("rate_limit_until", None)
+            
     session["status"] = "running"
     session["resume_event"].set()
     
