@@ -1,0 +1,110 @@
+The Investigation Nobody Could Answer
+Context
+Your company has operated a large distributed platform for several years. Over time, thousands of internal documents have accumulated:
+incident reports 
+deployment notes 
+architecture documents 
+troubleshooting guides 
+customer complaints 
+engineering discussions 
+post-incident reviews 
+One morning an engineer reports: "The Order API became extremely slow after yesterday's deployment. Has this happened before?" The answer isn't necessarily contained in one document. There may be:
+several incidents with similar symptoms 
+different terminology describing the same problem 
+old recommendations that are no longer valid 
+contradictory documents 
+newer documents that supersede older ones 
+incomplete evidence 
+
+The Challenge
+Build an Incident Investigation Agent that investigates operational incidents across a collection of internal documents. A question should be answerable only after the agent connects evidence from multiple sources such as incident reports, deployments, architecture notes, troubleshooting guides, customer complaints, and postmortems.
+Core Requirements
+Accept a natural-language investigation question.
+Search across multiple document types using semantic and metadata-aware retrieval.
+Use information discovered during investigation to perform additional searches.
+Distinguish document dates, software versions, and outdated guidance.
+Detect contradictions and avoid treating similar incidents as identical.
+Return an evidence-backed answer with document identifiers and a clear statement when evidence is insufficient.
+Inputs Students Can Test
+Test Input A — Deployment-related incident
+User prompt:
+"Why did the Order API become slow on September 16? Check whether the deployment was related and whether we have seen this before."
+
+documents.json:
+[
+  {
+    "document_id": "INC-1042",
+    "type": "incident_report",
+    "service": "orders-api",
+    "date": "2026-09-16",
+    "version": "v2.8.1",
+    "title": "Order API latency spike",
+    "content": "P95 latency increased significantly. The incident began shortly after the latest deployment."
+  },
+  {
+    "document_id": "DEP-882",
+    "type": "deployment_note",
+    "service": "orders-api",
+    "date": "2026-09-15",
+    "version": "v2.8.1",
+    "title": "Orders deployment",
+    "content": "Version v2.8.1 was deployed to production at 18:10 UTC."
+  },
+  {
+    "document_id": "PM-211",
+    "type": "postmortem",
+    "service": "orders-api",
+    "date": "2026-05-03",
+    "version": "v2.6.0",
+    "title": "Previous latency incident",
+    "content": "A previous latency incident was caused by database connection saturation during a schema migration."
+  }
+]
+Test Input B — Contradictory guidance
+User prompt:
+"The service is failing after a deployment. What should the on-call engineer do first?"
+
+documents.json:
+[
+  {
+    "document_id": "GUIDE-12",
+    "type": "troubleshooting",
+    "date": "2024-02-01",
+    "version": "v1",
+    "title": "Service restart procedure",
+    "content": "Restart Service A when latency remains high."
+  },
+  {
+    "document_id": "GUIDE-41",
+    "type": "troubleshooting",
+    "date": "2026-08-10",
+    "version": "v3",
+    "title": "Service A incident procedure",
+    "content": "Do not restart Service A during dependency failures. Check dependency health first."
+  }
+]
+Test Input C — Insufficient evidence
+User prompt:
+"Did this exact failure happen before?"
+
+documents.json:
+[
+  {
+    "document_id": "INC-300",
+    "type": "incident_report",
+    "service": "catalog-api",
+    "date": "2026-07-11",
+    "version": "v5",
+    "title": "Catalog latency",
+    "content": "Latency increased due to database saturation."
+  },
+  {
+    "document_id": "INC-301",
+    "type": "incident_report",
+    "service": "orders-api",
+    "date": "2026-07-12",
+    "version": "v4",
+    "title": "Order errors",
+    "content": "Requests failed because of an expired certificate."
+  }
+]

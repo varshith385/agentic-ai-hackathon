@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+backend/.env
+.env.local
+.env.*.local
+venv/
+__pycache__/
+*.pyc
+chroma_db/
+.DS_Store

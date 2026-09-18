@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+pydantic
+chromadb
+google-genai
+python-dotenv
+sse-starlette
