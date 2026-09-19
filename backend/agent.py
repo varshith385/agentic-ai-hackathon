@@ -282,7 +282,8 @@ If the evidence cannot logically establish a cause, explicitly invoke `insuffici
                     model=self.model_name,
                     messages=messages,
                     tools=tools,
-                    temperature=0.0
+                    temperature=0.0,
+                    max_tokens=4096
                 )
             except openai.RateLimitError as e:
                 if session:
